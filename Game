@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Geometry Dash — Fresh Edition (Fixed)</title>
+<style>
+  :root{--bg-1:#071025;--bg-2:#081220;--accent:#ff5d7a;--accent2:#6be3ff}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:#eaf3ff;background:linear-gradient(180deg,var(--bg-1),var(--bg-2));-webkit-font-smoothing:antialiased}
+  .container{height:100%;display:flex;align-items:center;justify-content:center;padding:18px}
+  .card{width:100%;max-width:1100px;border-radius:12px;overflow:hidden;display:grid;grid-template-columns:720px 1fr;gap:12px}
+  .left{padding:12px}
+  .right{padding:12px;border-left:1px solid rgba(255,255,255,0.03)}
+  canvas{width:100%;height:430px;border-radius:10px;background:#071025;display:block}
+  .controls{display:flex;gap:8px;margin-top:8px;align-items:center}
+  button{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.04);color:#eaf3ff;padding:8px 12px;border-radius:8px;cursor:pointer}
+  .small{padding:6px 10px;font-size:13px}
+  .muted{opacity:.8;font-size:13px}
+  .levels{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto;padding-right:6px}
+  .level-item{padding:8px;border-radius:8px;background:rgba(255,255,255,0.02);display:flex;justify-content:space-between;align-items:center}
+  .footer{margin-top:auto;font-size:13px;color:rgba(230,240,255,0.7)}
+  @media (max-width:980px){.card{grid-template-columns:1fr} canvas{height:360px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="left">
+      <canvas id="gameCanvas" width="696" height="430"></canvas>
+      <div class="controls">
+        <button id="startBtn" class="small">Start</button>
+        <button id="pauseBtn" class="small">Pause</button>
+        <button id="restartBtn" class="small">Restart</button>
+        <button id="downloadBtn" class="small">Download HTML</button>
+        <div style="flex:1"></div>
+        <label class="muted">Music <input type="checkbox" id="musicToggle" checked=""></label>
+        <label class="muted">SFX <input type="checkbox" id="sfxToggle" checked=""></label>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:12px;align-items:center;">
+        <div>Score: <span id="score">0</span></div>
+        <div>High: <span id="high">0</span></div>
+        <div style="margin-left:auto">Level: <span id="levelName">Easy Lane</span></div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div style="font-weight:700;font-size:18px">Fresh Geometry Dash — Fixed</div>
+      <div style="color:rgba(230,240,255,0.8);margin-top:6px" class="muted">Spikes fixed (now kill reliably), thinner spike visuals, better particle &amp; audio helpers, more polish.</div>
+
+      <div style="margin-top:10px;font-weight:600">Levels</div>
+      <div class="levels" id="levelsList"><div class="level-item"><div>Easy Lane</div><div><button class="small" data-i="0">Play</button></div></div><div class="level-item"><div>Neon Rush</div><div><button class="small" data-i="1">Play</button></div></div><div class="level-item"><div>Nightmare Spin</div><div><button class="small" data-i="2">Play</button></div></div></div>
+
+      <div style="margin-top:8px;font-weight:600">Settings</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+        <label class="muted">Volume <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+        <label class="muted">Difficulty <input id="difficulty" type="range" min="0" max="2" step="1" value="0"></label>
+        <label class="muted">Particles <input type="checkbox" id="particlesToggle" checked=""></label>
+      </div>
+
+      <div class="footer">Tip: Click/tap or press Space to jump. Select a level to change speed and patterns.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- Responsive canvas setup ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+function fitCanvas(){
+  const ratio = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 720;
+  const cssH = canvas.clientHeight || 430;
+  canvas.width = Math.floor(cssW * ratio);
+  canvas.height = Math.floor(cssH * ratio);
+  ctx.setTransform(ratio,0,0,ratio,0,0);
+}
+window.addEventListener('resize', fitCanvas); fitCanvas();
+
+// --- UI refs ---
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const restartBtn = document.getElementById('restartBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const scoreEl = document.getElementById('score');
+const highEl = document.getElementById('high');
+const levelNameEl = document.getElementById('levelName');
+const levelsList = document.getElementById('levelsList');
+const musicToggle = document.getElementById('musicToggle');
+const sfxToggle = document.getElementById('sfxToggle');
+const volSlider = document.getElementById('vol');
+const difficultySlider = document.getElementById('difficulty');
+const particlesToggle = document.getElementById('particlesToggle');
+
+// --- Game state ---
+let running=false, paused=false, frame=0, worldSpeed=4;
+let score=0, highScore=Number(localStorage.getItem('gd_high')||0); highEl.textContent = highScore;
+let currentLevel = 0;
+
+// --- Player ---
+const PLAYER_TEMPLATE = { x:140, y:0, w:36, h:36, vy:0, jump:-13, gravity:0.7, grounded:false };
+let player = {...PLAYER_TEMPLATE};
+
+// --- Levels ---
+const LEVELS = [
+  { name:'Easy Lane', speed:1, pattern:[{x:900,w:28,h:36,type:'spike'},{x:1400,w:36,h:48,type:'block'},{x:1900,w:28,h:36,type:'spike'}], coins:[{x:1100,y:180}], gap:380 },
+  { name:'Neon Rush', speed:1.2, pattern:[{x:820,w:28,h:36,type:'spike'},{x:1200,w:36,h:36,type:'block'},{x:1560,w:28,h:36,type:'spike'},{x:2100,w:40,h:50,type:'block'}], coins:[{x:900,y:160},{x:1500,y:140}], gap:330 },
+  { name:'Nightmare Spin', speed:1.45, pattern:[{x:780,w:28,h:36,type:'spike'},{x:1320,w:42,h:56,type:'block'},{x:1700,w:28,h:36,type:'spike'},{x:2100,w:60,h:84,type:'block'}], coins:[{x:950,y:140},{x:1450,y:110}], gap:300 }
+];
+
+// populate levels UI
+LEVELS.forEach((lvl,i)=>{
+  const el = document.createElement('div'); el.className='level-item';
+  el.innerHTML = `<div>${lvl.name}</div><div><button class="small" data-i="${i}">Play</button></div>`;
+  levelsList.appendChild(el);
+});
+levelsList.addEventListener('click', e=>{ const btn = e.target.closest('button'); if(!btn) return; selectLevel(Number(btn.dataset.i)); reset(); });
+function selectLevel(i){ currentLevel = i; levelNameEl.textContent = LEVELS[i].name; }
+selectLevel(0);
+
+// world arrays
+let obstacles = [], coins = [], particles = [], scroll = 0;
+
+function groundY(){ return Math.floor((canvas.height/(window.devicePixelRatio||1)) - 120); }
+
+// --- Reset / init ---
+function reset(){
+  running = true; paused = false; frame = 0; scroll = 0; score = 0;
+  player = {...PLAYER_TEMPLATE}; player.y = groundY() - player.h; player.vy = 0; player.grounded = true;
+  // build obstacle stream by copying pattern
+  obstacles = [];
+  const pattern = LEVELS[currentLevel].pattern;
+  for(let i=0;i<6;i++){
+    pattern.forEach(pat => { obstacles.push({ x: pat.x + i*1000, w: pat.w, h: pat.h, type: pat.type, passed:false }); });
+  }
+  coins = [];
+  LEVELS[currentLevel].coins.forEach(c=>{
+    for(let i=0;i<6;i++) coins.push({ x: c.x + i*1000, y: c.y, collected:false });
+  });
+  particles = [];
+  worldSpeed = 4 * LEVELS[currentLevel].speed * (1 + Number(difficultySlider.value)*0.12);
+  if(musicToggle.checked) startMusic();
+}
+
+// --- Input ---
+function doJump(){ if(player.grounded){ player.vy = player.jump; player.grounded=false; playSFX('jump'); } }
+window.addEventListener('keydown', e=>{ if(e.code==='Space' || e.code==='ArrowUp'){ if(!running) reset(); doJump(); } if(e.code==='KeyP'){ togglePause(); } });
+canvas.addEventListener('mousedown', e=>{ if(!running) reset(); doJump(); });
+canvas.addEventListener('touchstart', e=>{ e.preventDefault(); if(!running) reset(); doJump(); }, {passive:false});
+
+// --- Particles helper (fixed) ---
+function spawnParticle(x,y,dx,dy,color,life=40){ particles.push({ x, y, dx, dy, color, life, age:0 }); }
+
+// --- Audio helpers ---
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx=null, masterGain=null, musicTicker=null;
+function ensureAudio(){ if(!audioCtx){ audioCtx = new AudioCtx(); masterGain = audioCtx.createGain(); masterGain.gain.value = Number(volSlider.value); masterGain.connect(audioCtx.destination); } }
+function startMusic(){ if(!musicToggle.checked) return; ensureAudio(); if(musicTicker) return; let t = audioCtx.currentTime + 0.05; const pattern=[0,3,7,10]; const bpm=90; const beat=60/bpm; musicTicker = setInterval(()=>{
+  // schedule a short arpeggio
+  for(let i=0;i<4;i++){ const freq = 220 * Math.pow(2, pattern[i%pattern.length]/12); const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type='sawtooth'; o.frequency.value = freq; g.gain.value=0.0001; o.connect(g); g.connect(masterGain); o.start(t + i*0.12); g.gain.exponentialRampToValueAtTime(0.06, t + i*0.12 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + i*0.12 + 0.25); o.stop(t + i*0.12 + 0.26); }
+  t += 0.5;
+}, 500); }
+function stopMusic(){ if(musicTicker){ clearInterval(musicTicker); musicTicker=null; } }
+function playSFX(type){ if(!sfxToggle.checked) return; ensureAudio(); const now = audioCtx.currentTime; if(type==='jump'){ const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type='triangle'; o.frequency.value=260; g.gain.value=0.0001; o.connect(g); g.connect(masterGain); g.gain.exponentialRampToValueAtTime(0.12, now+0.02); g.gain.exponentialRampToValueAtTime(0.0001, now+0.2); o.start(now); o.stop(now+0.21); }
+if(type==='coin'){ const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(masterGain); g.gain.value=0.0001; g.gain.exponentialRampToValueAtTime(0.12, now+0.01); g.gain.exponentialRampToValueAtTime(0.0001, now+0.2); o.start(now); o.stop(now+0.22); }
+if(type==='hit'){ const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type='square'; o.frequency.value=110; o.connect(g); g.connect(masterGain); g.gain.value=0.28; g.gain.exponentialRampToValueAtTime(0.0001, now+0.4); o.start(now); o.stop(now+0.41); } }
+
+// --- Collision helper ---
+function rectIntersect(a,b){ return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + (b.h||0) && a.y + a.h > b.y; }
+
+// --- Obstacle spawn (keeps spikes thin and lethal) ---
+function spawnObstacleAt(x,w,h,type='spike'){ obstacles.push({ x, w, h, type, passed:false }); }
+
+// --- Game loop ---
+function update(){
+  if(!running){ drawMenu(); requestAnimationFrame(update); return; }
+  if(paused){ draw(); requestAnimationFrame(update); return; }
+  frame++;
+  scroll += worldSpeed;
+
+  // basic obstacle generation if low
+  if(obstacles.length < 8){ const lastX = obstacles.length ? obstacles[obstacles.length-1].x : (canvas.width/(window.devicePixelRatio||1)) + 600; const nx = lastX + 500 + Math.random()*300; const w = (Math.random()<0.5?28:36); const h = (w===28?36:40+Math.random()*40); const type = (w===28?'spike':'block'); spawnObstacleAt(nx, w, h, type); }
+
+  // physics
+  player.vy += player.gravity; player.y += player.vy; const gY = groundY(); if(player.y + player.h >= gY){ player.y = gY - player.h; player.vy = 0; player.grounded = true; }
+
+  // move obstacles & coins
+  for(let o of obstacles) o.x -= worldSpeed; for(let c of coins) c.x -= worldSpeed;
+  // clean offscreen
+  obstacles = obstacles.filter(o=> o.x + o.w > -100);
+  coins = coins.filter(c=> c.x > -200);
+
+  // collisions with obstacles
+  for(let i=obstacles.length-1;i>=0;i--){ const o = obstacles[i]; if(rectIntersect(player, {x:o.x,y:gY - o.h,w:o.w,h:o.h})){ // hit
+      running=false; stopMusic(); playSFX('hit'); highScore = Math.max(highScore, score); localStorage.setItem('gd_high', highScore); highEl.textContent = highScore;
+      // spawn death particles
+      for(let k=0;k<18;k++) spawnParticle(player.x + player.w/2, player.y + player.h/2, (Math.random()-0.5)*6, (Math.random()-1.5)*6, 'rgba(255,90,90,0.95)', 60);
+    }
+  }
+
+  // coin pickups
+  for(let i=coins.length-1;i>=0;i--){ const c = coins[i]; if(c.collected) continue; if(rectIntersect(player, {x:c.x,y:c.y,w:18,h:18})){ c.collected=true; score += 5; playSFX('coin'); for(let k=0;k<8;k++) spawnParticle(c.x, c.y, (Math.random()-0.5)*3, -Math.random()*3, 'rgba(250,230,120,0.95)', 40); } }
+
+  if(frame % 6 === 0) score++;
+  scoreEl.textContent = score;
+
+  // particles update
+  for(let i=particles.length-1;i>=0;i--){ const p = particles[i]; p.x += p.dx; p.y += p.dy; p.dy += 0.15; p.age++; if(p.age > p.life) particles.splice(i,1); }
+
+  draw(); requestAnimationFrame(update);
+}
+
+// --- Draw ---
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const W = canvas.width/(window.devicePixelRatio||1); const H = canvas.height/(window.devicePixelRatio||1);
+  // bg
+  const grd = ctx.createLinearGradient(0,0,0,H); grd.addColorStop(0,'#071025'); grd.addColorStop(1,'#081220'); ctx.fillStyle = grd; ctx.fillRect(0,0,W,H);
+  // parallax
+  for(let i=0;i<6;i++){ const px = ((i*430) - (scroll*0.18)) % (W + 300) - 150; ctx.globalAlpha = 0.06 + i*0.02; ctx.fillStyle = i%2? '#6be3ff':'#ff5d7a'; ctx.fillRect(px, 40 + (i%3)*26, 220, 12); }
+  ctx.globalAlpha = 1;
+  // ground
+  const gY = groundY(); ctx.fillStyle='#0e1724'; ctx.fillRect(0,gY,W,H-gY); ctx.fillStyle='rgba(255,255,255,0.02)'; ctx.fillRect(0,gY,W,6);
+
+  // obstacles (draw spikes as triangles narrow)
+  for(let o of obstacles){ const ox = o.x; const oy = gY - o.h; if(o.type==='spike'){
+      // narrow triangle spike centered in o.w
+      const spikeW = o.w; const spikeH = o.h; ctx.beginPath(); ctx.moveTo(ox + spikeW/2, oy); ctx.lineTo(ox, oy + spikeH); ctx.lineTo(ox + spikeW, oy + spikeH); ctx.closePath(); ctx.fillStyle='#ff5d6e'; ctx.fill(); ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(ox + 2, oy + 3, spikeW - 4, 6);
+    } else {
+      // block
+      ctx.fillStyle='#ff5d6e'; ctx.fillRect(ox, gY - o.h, o.w, o.h);
+      ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(ox + 4, gY - o.h + 6, o.w - 8, 6);
+    }
+  }
+
+  // coins
+  for(let c of coins){ if(c.collected) continue; ctx.save(); ctx.translate(c.x + 9, c.y + 9); ctx.beginPath(); ctx.arc(0,0,9,0,Math.PI*2); ctx.fillStyle='gold'; ctx.fill(); ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.stroke(); ctx.restore(); }
+
+  // player
+  ctx.save(); const rot = player.grounded?0: (player.vy/20); ctx.translate(player.x + player.w/2, player.y + player.h/2); ctx.rotate(rot); ctx.fillStyle='#ffd166'; ctx.fillRect(-player.w/2, -player.h/2, player.w, player.h); ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(-player.w/2 + 6, -player.h/2 + 6, player.w - 12, 8); ctx.restore();
+
+  // particles
+  for(let p of particles){ ctx.globalAlpha = 1 - (p.age / p.life); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); }
+  ctx.globalAlpha = 1;
+
+  // HUD
+  ctx.fillStyle = '#eaf3ff'; ctx.font='18px system-ui'; ctx.fillText('Score: ' + score, 16, 28); ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.fillText('High: ' + highScore, 16, 50);
+}
+
+function drawMenu(){ ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#08101b'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fff'; ctx.font='28px system-ui'; ctx.textAlign='center'; ctx.fillText('Tap / Click / Space — Start', (canvas.width/(window.devicePixelRatio||1))/2, (canvas.height/(window.devicePixelRatio||1))/2); ctx.textAlign='start'; }
+
+// --- Controls ---
+startBtn.addEventListener('click', ()=>{ if(!running) reset(); }); pauseBtn.addEventListener('click', ()=>{ togglePause(); }); restartBtn.addEventListener('click', ()=>{ reset(); });
+volSlider.addEventListener('input', ()=>{ if(masterGain) masterGain.gain.value = Number(volSlider.value); });
+musicToggle.addEventListener('change', ()=>{ if(!musicToggle.checked) stopMusic(); else startMusic(); });
+sfxToggle.addEventListener('change', ()=>{}); particlesToggle.addEventListener('change', ()=>{});
+
+downloadBtn.addEventListener('click', ()=>{ const doc = '<!doctype html>\n' + document.documentElement.outerHTML; const blob = new Blob([doc], {type:'text/html'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'geometry_dash_fresh_fixed.html'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); });
+
+function togglePause(){ paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; }
+
+// init world
+function initWorld(){ obstacles = LEVELS[currentLevel].pattern.map(p=>({...p})); coins = LEVELS[currentLevel].coins.map(c=>({x:c.x,y:c.y,collected:false})); }
+initWorld(); drawMenu(); requestAnimationFrame(update);
+
+// ensure audio resume on gesture
+['click','touchstart','keydown'].forEach(e=>window.addEventListener(e, ()=>{ if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }));
+window.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && musicToggle.checked) startMusic(); else stopMusic(); });
+
+difficultySlider.addEventListener('input', ()=>{ worldSpeed = 4 * (1 + Number(difficultySlider.value)*0.12) * LEVELS[currentLevel].speed; });
+
+</script>
+
+
+</body></html>
